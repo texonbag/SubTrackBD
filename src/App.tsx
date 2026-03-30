@@ -34,8 +34,12 @@ import {
   Moon,
   Sun,
   Download,
+  Settings,
+  MessageCircle,
+  Play
 } from "lucide-react";
 import { format } from "date-fns";
+import { Toaster, toast } from "sonner";
 
 interface Customer {
   id: number;
@@ -62,6 +66,7 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState("All");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -74,16 +79,30 @@ export default function App() {
     amount: "",
   });
 
+  const [settingsData, setSettingsData] = useState({
+    twilio_sid: "",
+    twilio_token: "",
+    twilio_number: "",
+  });
+
   const fetchData = async () => {
     try {
-      const [customersRes, dashboardRes] = await Promise.all([
+      const [customersRes, dashboardRes, settingsRes] = await Promise.all([
         fetch("/api/customers"),
         fetch("/api/dashboard"),
+        fetch("/api/settings")
       ]);
       setCustomers(await customersRes.json());
       setDashboard(await dashboardRes.json());
+      const settings = await settingsRes.json();
+      setSettingsData({
+        twilio_sid: settings.twilio_sid || "",
+        twilio_token: settings.twilio_token || "",
+        twilio_number: settings.twilio_number || "",
+      });
     } catch (error) {
       console.error("Failed to fetch data", error);
+      toast.error("Failed to fetch data from server");
     }
   };
 
@@ -107,7 +126,7 @@ export default function App() {
   const handleAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await fetch("/api/customers", {
+      const res = await fetch("/api/customers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -116,6 +135,7 @@ export default function App() {
           amount: parseFloat(formData.amount),
         }),
       });
+      if (!res.ok) throw new Error("Failed to add customer");
       setIsAddOpen(false);
       setFormData({
         name: "",
@@ -127,15 +147,66 @@ export default function App() {
         amount: "",
       });
       fetchData();
+      toast.success("Customer added successfully");
     } catch (error) {
       console.error("Failed to add customer", error);
+      toast.error("Failed to add customer");
     }
   };
 
   const handleDelete = async (id: number) => {
     if (confirm("Are you sure you want to delete this customer?")) {
-      await fetch(`/api/customers/${id}`, { method: "DELETE" });
-      fetchData();
+      try {
+        const res = await fetch(`/api/customers/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("Failed to delete");
+        fetchData();
+        toast.success("Customer deleted");
+      } catch (error) {
+        toast.error("Failed to delete customer");
+      }
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settingsData),
+      });
+      if (!res.ok) throw new Error("Failed to save settings");
+      setIsSettingsOpen(false);
+      toast.success("Settings saved successfully");
+    } catch (error) {
+      toast.error("Failed to save settings");
+    }
+  };
+
+  const handleSendWhatsApp = async (id: number, messageType: string) => {
+    try {
+      const res = await fetch(`/api/customers/${id}/send-whatsapp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageType }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to send message");
+      toast.success("WhatsApp message sent successfully!");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to send WhatsApp message");
+    }
+  };
+
+  const handleRunAutomation = async () => {
+    try {
+      toast.info("Running automation...");
+      const res = await fetch("/api/trigger-automation", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to run automation");
+      toast.success(`Automation complete: ${data.sentCount} sent, ${data.failedCount} failed.`);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to run automation");
     }
   };
 
@@ -207,6 +278,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 p-4 md:p-8 font-sans text-gray-900 dark:text-gray-100">
+      <Toaster position="top-center" richColors />
       <div className="max-w-6xl mx-auto space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -217,6 +289,57 @@ export default function App() {
             </p>
           </div>
           <div className="flex items-center gap-2 w-full md:w-auto">
+            <Button variant="outline" size="icon" onClick={handleRunAutomation} title="Run Automation Now">
+              <Play className="h-4 w-4" />
+            </Button>
+            <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="icon" title="Settings">
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Twilio WhatsApp Settings</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleSaveSettings} className="space-y-4 mt-4">
+                  <div className="space-y-2">
+                    <Label>Account SID</Label>
+                    <Input
+                      value={settingsData.twilio_sid}
+                      onChange={(e) =>
+                        setSettingsData({ ...settingsData, twilio_sid: e.target.value })
+                      }
+                      placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Auth Token</Label>
+                    <Input
+                      type="password"
+                      value={settingsData.twilio_token}
+                      onChange={(e) =>
+                        setSettingsData({ ...settingsData, twilio_token: e.target.value })
+                      }
+                      placeholder="Your Twilio Auth Token"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>WhatsApp Number</Label>
+                    <Input
+                      value={settingsData.twilio_number}
+                      onChange={(e) =>
+                        setSettingsData({ ...settingsData, twilio_number: e.target.value })
+                      }
+                      placeholder="whatsapp:+14155238886"
+                    />
+                  </div>
+                  <Button type="submit" className="w-full">
+                    Save Settings
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
             <Button variant="outline" size="icon" onClick={toggleDarkMode}>
               {isDarkMode ? (
                 <Sun className="h-4 w-4" />
@@ -501,14 +624,26 @@ export default function App() {
                           </span>
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(customer.id)}
-                            className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleSendWhatsApp(customer.id, customer.status === 'Expiring Soon' ? 'Reminder' : customer.status === 'Expired' ? 'Expired' : 'Custom')}
+                              className="text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
+                              title="Send WhatsApp Message"
+                            >
+                              <MessageCircle className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(customer.id)}
+                              className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                              title="Delete Customer"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))
